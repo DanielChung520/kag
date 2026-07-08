@@ -343,3 +343,76 @@ async def import_ontology(
         name=validated.name,
         version=ontology.version,
     )
+
+
+# ── Task 22: graph export ────────────────────────────────────────────
+
+
+class GraphNode(BaseModel):
+    id: str
+    layer: OntologyLayer
+    kind: str  # "entity_class"
+    label: str | None = None
+    description: str | None = None
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    label: str
+
+
+class GraphResponse(BaseModel):
+    layer: OntologyLayer
+    name: str
+    version: int
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
+def _build_graph(ontology: Ontology) -> tuple[list[GraphNode], list[GraphEdge]]:
+    """Convert a Domain/Major ontology into a node+edge graph for G6.
+
+    Basic ontologies have no entity classes / properties; return empty.
+    """
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []
+    payload: dict[str, Any] = ontology.payload
+    classes: list[dict[str, Any]] = payload.get("entity_classes", []) or []
+    props: list[dict[str, Any]] = payload.get("object_properties", []) or []
+    for c in classes:
+        nodes.append(
+            GraphNode(
+                id=c["name"],
+                layer=ontology.layer,
+                kind="entity_class",
+                label=c.get("name"),
+                description=c.get("description"),
+            )
+        )
+    for p in props:
+        edges.append(GraphEdge(source=p["domain"], target=p["range"], label=p["name"]))
+    return nodes, edges
+
+
+@router.get(
+    "/{layer}/{name}/graph",
+    response_model=GraphResponse,
+)
+async def get_graph(
+    layer: LayerPath,
+    name: NamePath,
+    _: Annotated[None, Depends(require_admin)],
+) -> GraphResponse:
+    store = get_ontology_store()
+    ontology = store.get_latest(str(layer), name)
+    if ontology is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found")
+    nodes, edges = _build_graph(ontology)
+    return GraphResponse(
+        layer=layer,
+        name=name,
+        version=ontology.version,
+        nodes=nodes,
+        edges=edges,
+    )
