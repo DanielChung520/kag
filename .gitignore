@@ -1,0 +1,58 @@
+# ─── Python ───
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+*.cover
+.tox/
+.nox/
+
+# ─── Virtual environments ───
+.venv/
+venv/
+env/
+
+# ─── uv ───
+uv.lock.bak
+
+# ─── Environment / secrets ───
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ─── Runtime data ───
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Logs ───
+*.log
+logs/
+
+# ─── Editor / OS ───
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ─── Coverage reports ───
+.coverage
+coverage.xml
+*.lcov
+
+# ─── Build artifacts ───
+*.egg
+*.whl
