@@ -17,6 +17,7 @@ versions remain queryable). DELETE is a soft delete (status →
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -26,12 +27,15 @@ from fastapi import (
     Depends,
     HTTPException,
     Path,
+    Request,
     status,
 )
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
 
 from kag.auth.dependencies import require_admin
 from kag.models import LifecycleStatus, Ontology, OntologyLayer
+from kag.ontology.schema import validate_payload
 from kag.ontology.store import get_ontology_store
 
 log = structlog.get_logger("kag.api.ontology")
@@ -221,3 +225,121 @@ async def delete_ontology(
     if store.soft_delete(str(layer), name) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ontology not found")
     log.info("ontology.deleted", layer=str(layer), name=name)
+
+
+# ── Task 19: import endpoint ──────────────────────────────────────────
+
+
+class ImportResponse(BaseModel):
+    accepted: bool
+    dry_run: bool
+    layer: OntologyLayer
+    name: str
+    version: int | None = None
+
+
+@router.post(
+    "/import",
+    response_model=ImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_ontology(
+    request: Request,
+    _: Annotated[None, Depends(require_admin)],
+) -> ImportResponse:
+    """Import via multipart file upload OR JSON body.
+
+    - ``multipart/form-data`` with ``file`` field → reads file bytes
+    - ``application/json`` with body ``{"payload": {...}, "dry_run": bool}``
+    - ``dry_run=true`` validates without persisting
+    """
+    content_type = (request.headers.get("content-type") or "").lower()
+    payload: dict[str, Any]
+    dry_run: bool = False
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile) or not upload.filename:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="multipart request missing 'file' field",
+            )
+        raw = await upload.read()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON in uploaded file: {exc}",
+            ) from exc
+        dry_run_raw = form.get("dry_run")
+        if dry_run_raw is not None:
+            dry_run = str(dry_run_raw).lower() in {"1", "true", "yes"}
+    elif content_type.startswith("application/json"):
+        try:
+            body = await request.json()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid JSON body: {exc}",
+            ) from exc
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="JSON body must be an object",
+            )
+        if "payload" not in body:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="JSON body must contain 'payload'",
+            )
+        payload = body["payload"]
+        dry_run = bool(body.get("dry_run", False))
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                "Use Content-Type multipart/form-data (with 'file' field) "
+                "or application/json (with 'payload' and optional 'dry_run')"
+            ),
+        )
+
+    try:
+        validated = validate_payload(payload)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payload validation failed: {exc}",
+        ) from exc
+
+    if dry_run:
+        log.info(
+            "ontology.import.dryrun",
+            layer=str(validated.layer),
+            name=validated.name,
+        )
+        return ImportResponse(
+            accepted=True,
+            dry_run=True,
+            layer=OntologyLayer(str(validated.layer)),
+            name=validated.name,
+            version=None,
+        )
+
+    store = get_ontology_store()
+    ontology = store.put_new_version(
+        name=validated.name, layer=str(validated.layer), payload=payload
+    )
+    log.info(
+        "ontology.imported",
+        layer=str(validated.layer),
+        name=validated.name,
+        version=ontology.version,
+    )
+    return ImportResponse(
+        accepted=True,
+        dry_run=False,
+        layer=OntologyLayer(str(validated.layer)),
+        name=validated.name,
+        version=ontology.version,
+    )
