@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv==0.5.*
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Sync dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Ruff lint
+        run: uv run ruff check src
+
+      - name: Ruff format check
+        run: uv run ruff format --check src
+
+      - name: mypy
+        run: uv run mypy src
+
+      - name: pytest (unit, skip integration)
+        run: uv run pytest -m 'not integration' --maxfail=1 -q
