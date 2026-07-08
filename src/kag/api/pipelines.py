@@ -335,3 +335,54 @@ async def retry_job(
         )
     new_id, _new_job = _enqueue(pipeline, file_id, row.get("kb_key", ""))
     return _job_row_to_response(_fetch_job(new_id) or {})
+
+
+class JobLogsResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    log_tail: str
+    result: dict[str, Any] | None = None
+    traceback: str | None = None
+
+
+@router.get("/api/v1/jobs/{job_id}/logs", response_model=JobLogsResponse)
+async def get_job_logs(
+    job_id: Annotated[str, Path(min_length=1)],
+    caller: Annotated[KnowledgeBase, Depends(current_kb)],
+) -> JobLogsResponse:
+    """Return the most recent task result + tail of stdout/stderr.
+
+    Combines the persisted ``log_tail`` field on the job row with
+    whatever Celery still has in its result backend. Useful for
+    debugging failures without shelling into the worker host.
+    """
+    row = _fetch_job(job_id)
+    if row is None or row.get("kb_key") != caller.kb_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    log_tail = row.get("log_tail", "") or ""
+    result_payload: dict[str, Any] | None = None
+    traceback_text: str | None = None
+    live_status = JobStatus(row.get("status", "pending"))
+    try:
+        ar = AsyncResult(job_id, app=celery_app)
+        if ar.state == "SUCCESS":
+            live_status = JobStatus.SUCCESS
+            result_payload = ar.result if isinstance(ar.result, dict) else None
+        elif ar.state == "FAILURE":
+            live_status = JobStatus.FAILURE
+            exc = ar.result
+            traceback_text = ar.traceback
+            result_payload = {"error": str(exc)}
+        elif ar.state == "REVOKED":
+            live_status = JobStatus.REVOKED
+        elif ar.state == "STARTED":
+            live_status = JobStatus.STARTED
+    except Exception:
+        log.warning("job.logs_lookup_failed", job_id=job_id)
+    return JobLogsResponse(
+        job_id=job_id,
+        status=live_status,
+        log_tail=log_tail,
+        result=result_payload,
+        traceback=traceback_text,
+    )
