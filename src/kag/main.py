@@ -14,13 +14,21 @@ from fastapi import FastAPI
 
 from kag import __version__
 from kag.api import router as api_router
+from kag.config import get_settings
 
 
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application.
 
     Exposed as a factory so tests can spin up isolated app instances.
+
+    Calls :func:`kag.config.get_settings` eagerly so that a missing or
+    invalid required env var causes the process to exit *before* uvicorn
+    binds the port — operators see a clear pydantic validation error
+    rather than a 502 from a half-initialized service.
     """
+    get_settings()
+
     app = FastAPI(
         title="kag",
         version=__version__,
