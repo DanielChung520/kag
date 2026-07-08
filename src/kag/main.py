@@ -18,6 +18,7 @@ from kag import __version__
 from kag.api import router as api_router
 from kag.api.metrics import MetricsMiddleware
 from kag.api.metrics import router as metrics_router
+from kag.api.openapi import apply_openapi
 from kag.config import get_settings
 from kag.logging_config import REQUEST_ID_HEADER, configure_logging, new_trace_id
 
@@ -46,6 +47,10 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.add_middleware(MetricsMiddleware)
     app.middleware("http")(_trace_id_middleware)
+    # OpenAPI customizations live in ``kag.api.openapi``. We bind the
+    # factory output of ``apply_openapi`` so the schema survives the
+    # first request that triggers ``app.openapi()``.
+    app.openapi = lambda: apply_openapi(app)  # type: ignore[method-assign]
     return app
 
 
