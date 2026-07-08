@@ -416,3 +416,66 @@ async def get_graph(
         nodes=nodes,
         edges=edges,
     )
+
+
+# ── Task 21: change tracking (diff) ──────────────────────────────────
+
+
+class OntologyDiff(BaseModel):
+    layer: OntologyLayer
+    name: str
+    from_version: int
+    to_version: int
+    added_entity_classes: list[str]
+    removed_entity_classes: list[str]
+    added_object_properties: list[str]
+    removed_object_properties: list[str]
+
+
+@router.get(
+    "/{layer}/{name}/versions/{version}/diff",
+    response_model=OntologyDiff,
+)
+async def get_diff(
+    layer: LayerPath,
+    name: NamePath,
+    version: Annotated[int, Path(ge=1)],
+    against: Annotated[
+        int | None,
+        Path(description="Base version to diff against; defaults to version-1."),
+    ] = None,
+    _: Annotated[None, Depends(require_admin)] = None,
+) -> OntologyDiff:
+    """Diff a version against an earlier one (default: the previous)."""
+    store = get_ontology_store()
+    base = (
+        store.get_version(str(layer), name, against)
+        if against is not None
+        else store.get_version(str(layer), name, max(1, version - 1))
+    )
+    target = store.get_version(str(layer), name, version)
+    if target is None or base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ontology version not found",
+        )
+
+    def _names(payload: dict[str, Any], key: str) -> set[str]:
+        items = payload.get(key, []) or []
+        return {it["name"] for it in items}
+
+    base_classes = _names(base.payload, "entity_classes")
+    target_classes = _names(target.payload, "entity_classes")
+    base_props = _names(base.payload, "object_properties")
+    target_props = _names(target.payload, "object_properties")
+
+    return OntologyDiff(
+        layer=layer,
+        name=name,
+        from_version=base.version,
+        to_version=target.version,
+        added_entity_classes=sorted(target_classes - base_classes),
+        removed_entity_classes=sorted(base_classes - target_classes),
+        added_object_properties=sorted(target_props - base_props),
+        removed_object_properties=sorted(base_props - target_props),
+    )
