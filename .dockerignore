@@ -1,0 +1,35 @@
+# Keep the build context small — uv only needs these to resolve the
+# lockfile. Everything else is brought in by the builder stage.
+.git
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+Thumbs.db
+
+# Runtime data — never bake secrets / state into an image.
+.env
+.env.local
+data/
+*.log
+logs/
+
+# Docs
+docs/
+
+# Tests
+tests/
+
+# Deployment
+deploy/
+scripts/
+
+# Misc
+README.md
+AGENTS.md
