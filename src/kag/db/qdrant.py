@@ -163,6 +163,7 @@ class QdrantStore:
         *,
         top_k: int = 10,
         kb_key: str | None = None,
+        file_id: str | None = None,
     ) -> list[ScoredPoint]:
         """Vector similarity search.
 
@@ -171,17 +172,20 @@ class QdrantStore:
             query_vector: Dense vector to search by.
             top_k: Number of results to return (default 10).
             kb_key: Optional kb_key filter for scoping results to one KB.
+            file_id: Optional file_id filter (ANDed with ``kb_key`` when both
+                are provided).
 
         Returns:
             List of :class:`ScoredPoint` ordered by descending score.
         """
         self._validate_collection_name(collection)
 
-        query_filter: Filter | None = None
+        conditions: list = []  # type: ignore[type-arg]
         if kb_key is not None:
-            query_filter = Filter(
-                must=[FieldCondition(key="kb_key", match=MatchValue(value=kb_key))],
-            )
+            conditions.append(FieldCondition(key="kb_key", match=MatchValue(value=kb_key)))
+        if file_id is not None:
+            conditions.append(FieldCondition(key="file_id", match=MatchValue(value=file_id)))
+        query_filter: Filter | None = Filter(must=conditions) if conditions else None
 
         result = self._client.query_points(
             collection_name=collection,
