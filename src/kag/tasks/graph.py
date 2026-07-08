@@ -22,8 +22,8 @@ import json
 from typing import Any
 
 import structlog
-from celery import (
-    shared_task,  # type: ignore[import-untyped]  # celery lacks PEP 561 stubs  # noqa: F401
+from celery import (  # type: ignore[import-untyped]  # celery lacks PEP 561 stubs
+    shared_task,  # noqa: F401  (kept for symmetry with vectorize.py)
 )
 
 from kag.config import get_settings
