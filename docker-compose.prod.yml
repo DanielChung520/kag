@@ -1,0 +1,54 @@
+# kag production stack.
+#
+# Two services share the venv baked into the runtime image and the
+# env file at /opt/kag/.env. cloudflared fronts the api service via
+# the kag.aiconn.ai tunnel — see deploy/README.md.
+#
+# Bring-up:
+#   sudo cp deploy/systemd/kag.service deploy/systemd/kag-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kag kag-worker
+#
+# This compose file is provided for local prod-like runs
+# (`docker compose -f docker-compose.prod.yml up -d`) and is the
+# reference for what the systemd units replicate.
+services:
+  api:
+    image: kag:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kag-api
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - .env
+    environment:
+      KAG_HOST: 127.0.0.1
+      KAG_PORT: "8800"
+    ports:
+      # Bind to localhost only — cloudflared tunnels into here.
+      # Do NOT change to 0.0.0.0; the server has no auth of its own
+      # at the network layer and would be exposed.
+      - "127.0.0.1:8800:8800"
+    volumes:
+      - /var/log/kag:/var/log/kag
+    healthcheck:
+      test: ["CMD", "kag", "db-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    image: kag:latest
+    container_name: kag-worker
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - .env
+    command: ["kag", "worker", "--concurrency", "2"]
+    volumes:
+      - /var/log/kag:/var/log/kag
+    depends_on:
+      - api

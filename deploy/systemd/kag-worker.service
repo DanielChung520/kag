@@ -1,0 +1,28 @@
+[Unit]
+Description=kag — Celery Worker (vectorize + graph extraction)
+After=network-online.target redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kag
+Group=kag
+WorkingDirectory=/opt/kag
+EnvironmentFile=/opt/kag/.env
+ExecStart=/opt/kag/.venv/bin/kag worker --concurrency 2
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/kag /var/log/kag
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kag-worker
+
+[Install]
+WantedBy=multi-user.target
