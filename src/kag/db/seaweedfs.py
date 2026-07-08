@@ -88,19 +88,39 @@ class SeaweedStore:
     def ensure_bucket(self) -> None:
         """Create the bucket if it does not exist.
 
-        Idempotent — safe to call repeatedly.  Swallows
-        ``BucketAlreadyOwnedByYou`` and ``BucketAlreadyExists`` errors.
+        Idempotent — safe to call repeatedly. Uses ``head_bucket`` first
+        so the common no-op path doesn't hit SeaweedFS's quirky
+        ``create_bucket`` response (some versions return a JSON body
+        boto3's XML parser cannot decode).
         """
         client = self._get_client()
+        try:
+            client.head_bucket(Bucket=self._bucket_name)
+            logger.debug("bucket.already_exists", bucket=self._bucket_name)
+            return
+        except botocore.exceptions.ClientError as exc:
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status != 404:
+                raise
+
         try:
             client.create_bucket(Bucket=self._bucket_name)
             logger.info("bucket.created", bucket=self._bucket_name)
         except botocore.exceptions.ClientError as exc:
-            code = exc.response["Error"]["Code"]
+            code = exc.response.get("Error", {}).get("Code")
             if code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
                 logger.debug("bucket.already_exists", bucket=self._bucket_name)
                 return
             raise
+        except botocore.exceptions.ResponseParserError:
+            # SeaweedFS quirk: returns a JSON body for an existing-bucket
+            # create call. The bucket exists either way; fall through to
+            # head_bucket to confirm.
+            try:
+                client.head_bucket(Bucket=self._bucket_name)
+            except botocore.exceptions.ClientError:
+                raise
+            logger.debug("bucket.already_exists", bucket=self._bucket_name)
 
     def upload_file(
         self,

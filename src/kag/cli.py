@@ -265,13 +265,14 @@ def dev(
 def migrate() -> None:
     """Idempotently create/update database schema.
 
-    Stub: implementation lands in Wave 2 task 12.
+    Creates the six kag_*-prefixed ArangoDB collections (with their
+    indexes) and the kag SeaweedFS bucket. Safe to re-run.
     """
-    typer.echo(
-        "kag migrate: not yet implemented (lands in Wave 2 task 12).",
-        err=True,
-    )
-    raise typer.Exit(1)
+    from kag.migrate import run_migrations
+
+    typer.echo("migrating: arangodb + seaweedfs")
+    run_migrations()
+    typer.echo("migration complete.")
 
 
 @app.command(name="db-check")
