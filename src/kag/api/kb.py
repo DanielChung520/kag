@@ -102,12 +102,16 @@ def _is_admin(authorization: str | None) -> bool:
 def _caller_kb_key(x_kag_api_key: str | None) -> str | None:
     """Resolve the caller's KB key from the X-KAG-API-Key header, or None.
 
-    TODO(wave-4): look up the APIKey record by hash, then load the
-    bound KB. Today: derive a deterministic stub from the key hash.
+    Looks the key up in the KB store: the APIKey record holds the
+    bound ``kb_key``; that's the one we return. ``None`` is returned
+    for malformed keys, unknown keys, or revoked keys.
     """
     if not x_kag_api_key or not x_kag_api_key.startswith(KEY_PREFIX):
         return None
-    return hash_key(x_kag_api_key)[:16]
+    record = get_kb_store().find_api_key(hash_key(x_kag_api_key))
+    if record is None or record.revoked:
+        return None
+    return record.kb_key
 
 
 @router.post(
