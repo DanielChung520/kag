@@ -205,6 +205,29 @@ async def upload_file(
     seaweed.upload_file(record.seaweed_key, data, content_type=mime)
 
     get_file_store().add(record)
+
+    # Also persist to ArangoDB kag_files so the vectorize / graph Celery
+    # tasks (which read from the durable store, not the in-memory one)
+    # can find the file. The in-memory FileStore stays as a fast list cache.
+    try:
+        from kag.db.arango import ArangoStore
+
+        ArangoStore().database.collection("kag_files").insert(
+            {
+                "_key": record.file_id,
+                "kb_key": record.kb_key,
+                "filename": record.filename,
+                "mime": record.mime,
+                "size_bytes": record.size_bytes,
+                "status": str(record.status),
+                "error_msg": None,
+                "seaweed_key": record.seaweed_key,
+                "uploaded_at": record.uploaded_at.isoformat(),
+                "processed_at": None,
+            }
+        )
+    except Exception:
+        log.exception("file.persist_arango_failed", file_id=record.file_id)
     log.info(
         "file.uploaded",
         kb_key=kb_key,

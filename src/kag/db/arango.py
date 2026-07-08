@@ -49,6 +49,20 @@ _COLLECTION_DEFS: dict[str, list[dict[str, Any]]] = {
         {"type": "hash", "fields": ["kb_key"]},
         {"type": "hash", "fields": ["revoked"]},
     ],
+    "kag_chunks": [
+        {"type": "hash", "fields": ["kb_key"]},
+        {"type": "hash", "fields": ["file_id"]},
+        {"type": "skiplist", "fields": ["chunk_index"]},
+    ],
+    "kag_graph_nodes": [
+        {"type": "hash", "fields": ["kb_key"]},
+        {"type": "skiplist", "fields": ["name"]},
+    ],
+    "kag_graph_edges": [
+        {"type": "hash", "fields": ["kb_key"]},
+        {"type": "hash", "fields": ["from_node"]},
+        {"type": "hash", "fields": ["to_node"]},
+    ],
 }
 
 
@@ -126,6 +140,11 @@ class ArangoStore:
         if self._client is not None:
             self._client.close()
             self._client = None
+
+    @property
+    def database(self) -> StandardDatabase:
+        """The connected :class:`StandardDatabase` (lazy-connects)."""
+        return self._connect()
 
     # ── Namespacing helper ─────────────────────────────────────────────
 
