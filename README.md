@@ -46,7 +46,7 @@
 
 - **Python 3.11+** (managed automatically by `uv`)
 - **uv** — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **ArangoDB, Qdrant, SeaweedFS, Redis** — shared with `aibox-th` (see [DEPLOYMENT.md](docs/DEPLOYMENT.md#shared-infrastructure))
+- **ArangoDB, Qdrant, SeaweedFS, Redis** — shared with `aibox-th` (see [Shared Infrastructure](#shared-infrastructure-with-aibox-th) below)
 - **[dllm](https://github.com/dllm)** (preferred) — unified LLM serving layer with OpenAI-compatible API. Ollama / vLLM / llama.cpp also supported.
 
 ### 2. Clone & Install
@@ -76,7 +76,19 @@ uv run kag migrate
 
 This idempotently creates 6 ArangoDB collections (with indexes), Qdrant is collection-per-KB so no setup needed, and verifies the SeaweedFS bucket exists.
 
-### 5. Run
+### 5. Verify connectivity (optional but recommended)
+
+```bash
+# Confirm each shared service responds before starting kag
+curl -sf http://localhost:8529/_api/version | head -1    # ArangoDB
+curl -sf http://localhost:6333/                          # Qdrant
+curl -sf http://localhost:8888/                          # SeaweedFS
+redis-cli -h localhost ping                              # Redis (PONG)
+```
+
+All four should respond. If any is missing, start the shared stack (see next section).
+
+### 6. Run
 
 ```bash
 uv run kag dev          # uvicorn --reload on :8800
@@ -85,7 +97,7 @@ uv run kag start        # daemon mode with PID file + logs
 
 Visit `http://localhost:8800/docs` for interactive OpenAPI documentation.
 
-### 6. First API Call
+### 7. First API Call
 
 ```bash
 # Create a knowledge base (uses admin token, not API key)
@@ -95,6 +107,53 @@ curl -X POST http://localhost:8800/api/v1/knowledge-bases \
   -d '{"name": "My First KB", "ontology_major": "sample"}'
 # → {"kb_key": "...", "api_key": "kag_xxxxxxxxxx", ...}  ← save api_key!
 ```
+
+---
+
+## Shared Infrastructure (with `aibox-th`)
+
+`kag` does **not** bundle its own ArangoDB / Qdrant / SeaweedFS / Redis instances. It connects to the same services that power the `aibox-th` desktop app, with strict namespacing so the two never collide.
+
+### Namespacing rules
+
+| Datastore | `kag` namespace | Hard rule |
+|---|---|---|
+| ArangoDB | same database as `aibox-th` (e.g. `aistock`); all collections prefixed `kag_` | **Never** read/write/drop any collection that does NOT start with `kag_`. |
+| Qdrant | per-KB collections prefixed `kag_kb_<kb_key>` | Do not touch collections without the `kag_kb_` prefix. |
+| SeaweedFS | bucket `kag` (separate from `aibox-th`'s bucket); keys under `kag/` | Use only the `kag` bucket; keys must start with `kag/`. |
+| Redis | use a different DB number (e.g. `/1`) or rely on Celery key namespacing | Don't reuse `aibox-th`'s DB unless you've verified the keyspace. |
+
+This isolation is enforced in the adapter code (e.g. `QdrantStore.collection_name(kb_key)` returns `f"kag_kb_{kb_key}"`); there is no env knob to disable it.
+
+### Default ports (when running on `localhost`)
+
+| Service | Port | `kag` env var |
+|---|---|---|
+| ArangoDB | `8529` | `ARANGO_URL` |
+| Qdrant | `6333` | `QDRANT_URL` |
+| SeaweedFS | `8888` | `SEAWEED_URL` |
+| Redis | `6379` | `REDIS_URL` |
+| dllm (LLM) | `11400` | `LLM_BASE_URL=http://localhost:11400/v1` |
+
+### One-time verification (before first `kag migrate`)
+
+```bash
+# ArangoDB: list databases
+curl -s -u root:$ARANGO_PASSWORD http://localhost:8529/_api/database | jq '.result[].name'
+
+# Qdrant: list existing collections (should be empty or only kag_/kag_kb_ prefixed)
+curl -s http://localhost:6333/collections | jq '.result.collections[].name'
+
+# SeaweedFS: verify kag bucket exists (create it manually if not)
+curl -s http://localhost:8888/kag/  # 200 if bucket exists
+
+# Redis: ensure the configured DB is reachable
+redis-cli -h localhost -n 0 ping   # PONG
+```
+
+### Why no `docker-compose.dev.yml`?
+
+The team's deployment model assumes `aibox-th` already provisions the four shared services (typically via `aibox-th/docker-compose.infra.yml`). `kag` simply points at them via `.env`. If you are setting up a fresh dev box without `aibox-th`, copy that compose file over and start it before working on `kag`.
 
 ---
 
