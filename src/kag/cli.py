@@ -289,16 +289,32 @@ def db_check() -> None:
 
 
 @app.command()
-def worker() -> None:
+def worker(
+    concurrency: Annotated[int, typer.Option(help="Worker concurrency (process count).")] = 1,
+    loglevel: Annotated[
+        str, typer.Option(help="Celery log level (debug, info, warning, error).")
+    ] = "info",
+    queues: Annotated[
+        str, typer.Option(help="Comma-separated queue names to consume.")
+    ] = "kag.default,kag.vectorize,kag.graph",
+) -> None:
     """Start a Celery worker (separate process from the HTTP server).
 
-    Stub: implementation lands in Wave 5 tasks 23-24.
+    The worker consumes tasks published by the API process and the
+    ``kag migrate``/``kag db-check`` helpers. Run this on every host
+    that needs write-path capacity; the HTTP API itself is
+    stateless and can be horizontally scaled independently.
     """
-    typer.echo(
-        "kag worker: not yet implemented (lands in Wave 5 tasks 23-24).",
-        err=True,
-    )
-    raise typer.Exit(1)
+    from kag.tasks.celery_app import celery_app
+
+    argv = [
+        "worker",
+        f"--concurrency={concurrency}",
+        f"--loglevel={loglevel}",
+        f"--queues={queues}",
+    ]
+    typer.echo(f"starting celery worker: queues={queues} concurrency={concurrency}")
+    celery_app.worker_main(argv)
 
 
 @logs_app.callback()
