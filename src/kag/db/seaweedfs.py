@@ -13,6 +13,7 @@ from typing import Any
 
 import boto3  # type: ignore[import-untyped]  # boto3 lacks PEP 561 stubs
 import botocore.exceptions  # type: ignore[import-untyped]  # botocore lacks PEP 561 stubs
+import botocore.parsers  # type: ignore[import-untyped]  # ResponseParserError lives here, not in .exceptions
 import structlog
 
 from kag.config import get_settings
@@ -138,15 +139,22 @@ class SeaweedStore:
         """
         self._validate_key(key)
         client = self._get_client()
+        put_kwargs: dict[str, object] = {
+            "Bucket": self._bucket_name,
+            "Key": key,
+            "Body": data,
+        }
         if content_type is not None:
-            client.put_object(
-                Bucket=self._bucket_name,
-                Key=key,
-                Body=data,
-                ContentType=content_type,
-            )
-        else:
-            client.put_object(Bucket=self._bucket_name, Key=key, Body=data)
+            put_kwargs["ContentType"] = content_type
+        try:
+            client.put_object(**put_kwargs)
+        except botocore.parsers.ResponseParserError:
+            # SeaweedFS quirk: returns a JSON body for put_object where
+            # boto3 expects XML. The object was uploaded; the parse
+            # error is from boto3 trying to read the response shape, not
+            # from the upload itself. Confirm with head_object as a sanity
+            # check, then treat as success.
+            client.head_object(Bucket=self._bucket_name, Key=key)
         logger.debug("file.uploaded", key=key, size=len(data))
 
     def download_file(self, key: str) -> bytes:
