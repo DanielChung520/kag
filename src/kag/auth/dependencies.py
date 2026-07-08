@@ -41,6 +41,11 @@ async def current_kb(
 
     The returned object exposes ``api_key_hash`` so handlers can
     correlate jobs/files back to the key that created them.
+
+    Today this consults the in-memory KB store (Wave 3). The same
+    contract carries over to the ArangoDB-backed implementation in
+    a follow-up: the dep returns a :class:`KnowledgeBase`, and the
+    store internals are an implementation detail.
     """
     if not x_kag_api_key.startswith(KEY_PREFIX):
         log.warning("auth.bad_key_format", prefix=x_kag_api_key[:8])
@@ -49,19 +54,23 @@ async def current_kb(
             detail="API key not recognized",
         )
 
-    key_hash = hash_key(x_kag_api_key)
-    # TODO(wave-4): query kag_api_keys for (key_hash, revoked=false), then
-    # load KB from kag_knowledge_bases. Today: derive a deterministic stub
-    # so the route handlers can be developed and tested against this
-    # exact contract.
-    kb_key = key_hash[:16]
+    from kag.store.kb import get_kb_store  # local import: avoid dep cycle
 
-    return KnowledgeBase(
-        kb_key=kb_key,
-        name=f"kb-{kb_key[:8]}",
-        ontology_major_key="stub",
-        api_key_hash=key_hash,
-    )
+    key_hash = hash_key(x_kag_api_key)
+    api_key_record = get_kb_store().find_api_key(key_hash)
+    if api_key_record is None or api_key_record.revoked:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not recognized",
+        )
+    kb = get_kb_store().get(api_key_record.kb_key)
+    if kb is None:
+        log.error("auth.kb_missing_for_key", kb_key=api_key_record.kb_key)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not recognized",
+        )
+    return kb
 
 
 async def require_admin(
