@@ -16,6 +16,8 @@ from starlette.responses import Response
 
 from kag import __version__
 from kag.api import router as api_router
+from kag.api.metrics import MetricsMiddleware
+from kag.api.metrics import router as metrics_router
 from kag.config import get_settings
 from kag.logging_config import REQUEST_ID_HEADER, configure_logging, new_trace_id
 
@@ -41,6 +43,8 @@ def create_app() -> FastAPI:
         description="Knowledge-Augmented Generation service.",
     )
     app.include_router(api_router)
+    app.include_router(metrics_router)
+    app.add_middleware(MetricsMiddleware)
     app.middleware("http")(_trace_id_middleware)
     return app
 
