@@ -123,6 +123,48 @@ curl -X POST http://localhost:8800/api/v1/knowledge-bases \
 | SeaweedFS | bucket `kag` (separate from `aibox-th`'s bucket); keys under `kag/` | Use only the `kag` bucket; keys must start with `kag/`. |
 | Redis | use a different DB number (e.g. `/1`) or rely on Celery key namespacing | Don't reuse `aibox-th`'s DB unless you've verified the keyspace. |
 
+---
+
+## External API
+
+The full HTTP API is documented in **[`docs/API.md`](docs/API.md)**;
+the canonical source is the live OpenAPI schema at
+`http://localhost:8800/openapi.json` (also browsable at
+`/docs` Swagger UI and `/redoc`).
+
+Quick reference — the endpoints an external caller will use most:
+
+- `GET /health` — liveness
+- `POST /api/v1/knowledge-bases` — create a KB and receive its one-time API key (`kag_<32 base62>`)
+- `GET /api/v1/knowledge-bases/{kb_key}/files` — list files
+- `POST /api/v1/knowledge-bases/{kb_key}/files` — upload (multipart OR `{"path": "..."}` body)
+- `POST /api/v1/knowledge-bases/{kb_key}/pipelines/all` — run vectorize + graph extraction
+- `POST /api/v1/hybrid/search` — HybridRAG query (KB Key auth)
+
+Two auth schemes (per-endpoint):
+
+- `Authorization: Bearer <KAG_ADMIN_TOKEN>` — KB / ontology / job management
+- `X-KAG-API-Key: kag_<32 base62>` — per-KB operations (file, search, pipeline)
+
+**Keep docs in sync with the code**. The endpoint table in
+`docs/API.md` is auto-checked against the live OpenAPI by
+`scripts/check_api_sync.py`; that script runs in CI on every
+PR. When you add or rename an endpoint — whether the change
+comes from a kag-side PR or a downstream consumer of this
+API — all three of these **must** land in the same commit:
+
+1. Add the route under `src/kag/api/<topic>.py`.
+2. Add the row to the **Endpoints Overview** table at the top
+   of `docs/API.md` (format: `| METHOD | \`/path\` | Auth | Description |`).
+3. Add a one-line entry to the README's "External API" section
+   above if the endpoint is one a typical caller uses.
+4. Run `uv run python scripts/check_api_sync.py` locally before
+   pushing. The script exits non-zero on any drift, so a missed
+   step fails the build.
+
+Renames, path changes, and removals are breaking — bump
+`/api/v1` → `/api/v2` and update the Versioning section.
+
 This isolation is enforced in the adapter code (e.g. `QdrantStore.collection_name(kb_key)` returns `f"kag_kb_{kb_key}"`); there is no env knob to disable it.
 
 ### Default ports (when running on `localhost`)

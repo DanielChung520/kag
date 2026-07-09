@@ -31,41 +31,45 @@ API keys are issued **once** at KB creation. The raw key is returned in the resp
 
 ## Endpoints Overview
 
+> **The canonical list of routes is the running server's OpenAPI
+> schema at `/openapi.json`. This table mirrors it; a CI check
+> (`scripts/check_api_sync.py`) fails the build if they drift.**
+
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/health` | — | Health + dependency status |
+| GET | `/health` | — | Liveness + version |
 | POST | `/api/v1/knowledge-bases` | Admin | Create KB (returns `api_key` once) |
 | GET | `/api/v1/knowledge-bases` | Admin | List all KBs |
 | GET | `/api/v1/knowledge-bases/{kb_key}` | Admin OR KB Key | Get KB detail |
 | PATCH | `/api/v1/knowledge-bases/{kb_key}` | Admin | Update name/description |
-| DELETE | `/api/v1/knowledge-bases/{kb_key}` | Admin | Full cleanup |
-| POST | `/api/v1/knowledge-bases/{kb_key}/api-keys` | Admin | Issue new key (rotates old) |
-| GET | `/api/v1/knowledge-bases/{kb_key}/api-keys` | Admin | List active keys (no raw values) |
-| DELETE | `/api/v1/knowledge-bases/{kb_key}/api-keys/{key_id}` | Admin | Revoke key |
+| DELETE | `/api/v1/knowledge-bases/{kb_key}` | Admin | Soft delete (status=deprecated) |
 | POST | `/api/v1/knowledge-bases/{kb_key}/files` | KB Key | Upload file (multipart OR path) |
 | GET | `/api/v1/knowledge-bases/{kb_key}/files` | KB Key | List files |
-| GET | `/api/v1/knowledge-bases/{kb_key}/files/{file_id}` | KB Key | File detail + status |
-| DELETE | `/api/v1/knowledge-bases/{kb_key}/files/{file_id}` | KB Key | Delete file + all derived data |
-| GET | `/api/v1/knowledge-bases/{kb_key}/files/{file_id}/download` | KB Key | Presigned URL to original |
-| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/vectorize` | KB Key | Trigger vectorization for files |
-| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/extract-graph` | KB Key | Trigger graph extraction |
-| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/all` | KB Key | Run full pipeline |
-| GET | `/api/v1/jobs/{job_id}` | Admin OR KB Key (owning) | Job status |
-| POST | `/api/v1/jobs/{job_id}/abort` | Admin OR KB Key | Revoke task |
-| POST | `/api/v1/jobs/{job_id}/retry` | Admin OR KB Key | Re-enqueue task |
-| GET | `/api/v1/jobs/{job_id}/logs` | Admin OR KB Key | Last N log lines |
-| POST | `/api/v1/ontologies` | Admin | Create ontology |
+| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/vectorize` | KB Key | Trigger vectorization for pending files |
+| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/extract-graph` | KB Key | Trigger graph extraction for vectorized files |
+| POST | `/api/v1/knowledge-bases/{kb_key}/pipelines/all` | KB Key | Run vectorize + extract-graph in sequence |
+| GET | `/api/v1/jobs/{job_id}` | Admin OR KB Key (owning) | Job status (live from Celery + persisted) |
+| POST | `/api/v1/jobs/{job_id}/abort` | Admin OR KB Key | Revoke the Celery task |
+| POST | `/api/v1/jobs/{job_id}/retry` | Admin OR KB Key | Re-enqueue with a fresh Celery task id |
+| GET | `/api/v1/jobs/{job_id}/logs` | Admin OR KB Key | Return last task result + tail + traceback |
+| POST | `/api/v1/ontologies` | Admin | Create ontology (v1) |
 | POST | `/api/v1/ontologies/import` | Admin | Import ontology JSON (file OR inline) |
-| GET | `/api/v1/ontologies` | Admin | List ontologies |
-| GET | `/api/v1/ontologies/{key}` | Admin | Get latest version |
-| GET | `/api/v1/ontologies/{key}/versions` | Admin | List all versions |
-| GET | `/api/v1/ontologies/{key}/versions/{v}` | Admin | Get specific version |
-| PUT | `/api/v1/ontologies/{key}` | Admin | Update (bumps version) |
-| DELETE | `/api/v1/ontologies/{key}` | Admin | Soft delete (status=deprecated) |
-| GET | `/api/v1/ontologies/{key}/graph` | Admin | Export nodes/edges for viz |
-| POST | `/api/v1/hybrid/search` | KB Key | HybridRAG (vector + graph fusion) |
-| POST | `/api/v1/hybrid/evidence` | KB Key | Evidence-only search |
-| POST | `/api/v1/vectors/search` | KB Key | Pure vector search (faster, less complete) |
+| GET | `/api/v1/ontologies` | Admin | List latest version of every ontology |
+| GET | `/api/v1/ontologies/{layer}/{name}` | Admin | Get the latest version |
+| PUT | `/api/v1/ontologies/{layer}/{name}` | Admin | Update (bumps version, old version preserved) |
+| DELETE | `/api/v1/ontologies/{layer}/{name}` | Admin | Soft delete (status=deprecated) |
+| GET | `/api/v1/ontologies/{layer}/{name}/versions` | Admin | All versions for an ontology |
+| GET | `/api/v1/ontologies/{layer}/{name}/versions/{version}` | Admin | Get a specific version |
+| GET | `/api/v1/ontologies/{layer}/{name}/versions/{version}/diff` | Admin | Diff two versions (added/removed entities + relations) |
+| GET | `/api/v1/ontologies/{layer}/{name}/graph` | Admin | Export nodes + edges (for G6 / similar viz) |
+| POST | `/api/v1/hybrid/search` | KB Key | HybridRAG (vector + graph fusion + boundary check) |
+| POST | `/api/v1/hybrid/evidence` | KB Key | Same as `/search`; always returns the full `evidence` list |
+
+`{layer}` ∈ `basic` | `domain` | `major`.
+`{kb_key}` is the kb's uuid hex (32 chars).
+KB API keys are issued **once** at KB creation. Rotation is
+not yet exposed as a separate endpoint (tracked for v0.1.1); for
+now, delete the KB and re-create to rotate.
 
 ---
 
@@ -321,14 +325,6 @@ Same auth + request shape as `/hybrid/search` but **always returns evidence-only
 
 ---
 
-### `POST /api/v1/vectors/search`
-
-Pure vector search, no graph fusion. Faster, simpler. Same auth + filters as hybrid.
-
-**Response**: like `/hybrid/search` but `source.type` is always `"vector"`, no `evidence` field, no `evidence_summary`.
-
----
-
 ## Error Response Format
 
 All errors use a consistent shape:
@@ -389,3 +385,53 @@ Defaults (configurable per deployment via reverse proxy):
 Currently there is no official SDK. Clients are expected to use any HTTP client (curl, httpx, requests, fetch, etc.) and an OpenAPI generator (e.g., `openapi-generator-cli` for Python, `openapi-typescript` for TS).
 
 A thin official `kag-client` Python package is on the roadmap but not v0.1.
+
+---
+
+## Keeping this doc in sync with the code
+
+The table at the top of this file is auto-checked against the
+running server. If you change `src/kag/api/**`, run:
+
+```bash
+uv run python scripts/check_api_sync.py --docs docs/API.md
+```
+
+In CI the same script runs on every PR; a non-zero exit fails the
+build. The script compares three sources:
+
+1. The FastAPI app's OpenAPI schema (canonical — generated from
+   the live `app.openapi()`)
+2. The endpoint table in this doc
+3. The README's "External API" section
+
+Adding a new endpoint is a **two-step** change — both must land in
+the same commit:
+
+1. Add the route under `src/kag/api/<topic>.py`. Use the existing
+   `router = APIRouter(prefix="/api/v1/...", tags=["..."])` pattern.
+   Tag it with one of the existing tag names from
+   `src/kag/api/openapi.py` so the new endpoint shows up in the
+   right group.
+2. Add the row to the **Endpoints Overview** table at the top of
+   this file. Format: ``| METHOD | `/path` | Auth | Description |``.
+
+Renaming a path, changing a status code, or removing an endpoint
+are all breaking changes — they require bumping the path version
+(`/api/v1` → `/api/v2`) and the doc's Versioning section.
+
+If you only want to add a new optional field to a response model,
+you don't need to touch the table; the OpenAPI generator clients
+will pick up the new field automatically.
+
+### Ops endpoints (not part of the user API)
+
+These are **not** included in the OpenAPI schema and don't appear
+in the table above. They are documented here for operators.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/metrics` | Prometheus text-format scrape. Exposes `kag_http_requests_total{path,method,status}` and `kag_http_request_duration_ms_{count,sum}`. In-process counter, one per replica; aggregate at the Prometheus side. |
+| GET | `/openapi.json` | Raw OpenAPI 3.1 schema. Mirror this in CI to detect doc drift (see `scripts/check_api_sync.py`). |
+| GET | `/docs` | Swagger UI. |
+| GET | `/redoc` | ReDoc UI. |

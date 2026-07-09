@@ -44,5 +44,8 @@ jobs:
       - name: mypy
         run: uv run mypy src
 
+      - name: API doc sync (OpenAPI vs docs/API.md)
+        run: uv run python scripts/check_api_sync.py
+
       - name: pytest (unit, skip integration)
         run: uv run pytest -m 'not integration' --maxfail=1 -q
